@@ -144,7 +144,7 @@ async fn main() -> Result<()> {
             let aes_key = (0..32).map(|_| rand::random::<u8>()).collect::<Vec<u8>>();
             println!("aes_key {:?}", aes_key);
             let buf = utils::generate_idx(p, xor_key, &aes_key, &d)?;
-            let idx_url = utils::upload_single(&mut opener, buf).await?;
+            let idx_url = utils::upload_index(&mut opener, buf).await?;
             println!("idx url {}", idx_url);
             let link = utils::combine(aes_key, idx_url)?;
             println!("upload idx successfully");
@@ -155,7 +155,7 @@ async fn main() -> Result<()> {
         let (aes_key, url) = utils::split(c)?;
         println!("aes_key {:?}", aes_key);
         let idx_url = format!("http://i0.hdslb.com/bfs/album/{}.png", url);
-        let (xor_key, filename, sz, urls) = utils::get_index(&idx_url, &aes_key).await?;
+        let (xor_key, filename, sz, urls) = utils::download_index(&idx_url, &aes_key).await?;
         println!("xor_key {}", xor_key);
         println!("filename {}", filename);
         println!("size {} bytes", sz);

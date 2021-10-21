@@ -6,10 +6,10 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + S
 
 pub use bili::create_opener;
 pub use bili::download_batch;
-pub use bili::get_index;
+pub use bili::download_index;
 pub use bili::get_user_info;
 pub use bili::upload_batch;
-pub use bili::upload_single;
+pub use bili::upload_index;
 
 pub use image::decode;
 pub use image::encode;
