@@ -9,20 +9,7 @@ use std::path::Path;
 use std::result::Result::Ok;
 use utils::Result;
 
-const CFG_PATH: &str = "./bilipan.json";
-const TEMP_PATH: &str = "./TEMP";
-
-fn get_input(sb: &mut String) -> Result<()> {
-    sb.clear();
-    loop {
-        std::io::stdin().read_line(sb)?;
-        *sb = sb.trim().to_owned();
-        if !sb.is_empty() {
-            break;
-        }
-    }
-    Ok(())
-}
+const CFG_PATH: &str = "bilipan.json";
 
 async fn get_opener() -> Result<Client> {
     let mut fs = std::fs::File::open(CFG_PATH)?;
@@ -62,42 +49,9 @@ async fn proc() -> Result<Client> {
     };
 }
 
-const CHR: &str = "0123456789abcdef";
-
-fn combine(aes_key: Vec<u8>, idx_url: String) -> Result<String> {
-    let url = regex::Regex::new("i0.hdslb.com/bfs/album/(.*?).png")?
-        .captures_iter(&idx_url)
-        .next()
-        .ok_or("")?
-        .get(1)
-        .ok_or("")?
-        .as_str()
-        .to_string();
-    let mut ret = String::with_capacity(40 + aes_key.len());
-    for i in &aes_key {
-        let hi = ((*i) >> 4) & 0xF;
-        let lo = (*i) & 0xF;
-        ret.push(CHR.chars().nth(hi as usize).unwrap());
-        ret.push(CHR.chars().nth(lo as usize).unwrap());
-    }
-    ret.push_str(&url);
-    Ok(ret)
-}
-
-fn split(src: &str) -> Result<(Vec<u8>, String)> {
-    let (a, b) = src.split_at(64);
-    let mut fst = Vec::new();
-    let snd = b.to_owned();
-    for i in 0..32 {
-        let hi = u8::from_str_radix(&a[(i + i)..(i + i + 1)], 16)?;
-        let lo = u8::from_str_radix(&a[(i + i + 1)..(i + i + 1 + 1)], 16)?;
-        fst.push(hi << 4 | lo);
-    }
-    Ok((fst, snd))
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
+    let start = chrono::offset::Local::now();
     let matches = App::new("Bili Pan")
         .version("0.1.0")
         .arg(
@@ -121,7 +75,7 @@ async fn main() -> Result<()> {
                 .takes_value(true),
         )
         .get_matches();
-
+    let mut show_time = false;
     let mut sb = String::new();
     if matches.is_present("login") {
         let do_login: bool = {
@@ -135,21 +89,17 @@ async fn main() -> Result<()> {
                     } else {
                         println!("{} has already logined in, override? [Y/N]", username);
                         loop {
-                            get_input(&mut sb)?;
-                            if sb.len() == 1
-                                && (sb.chars().next().unwrap_or('$') == 'Y'
-                                || sb.chars().next().unwrap_or('$') == 'y')
-                            {
-                                break true;
-                            } else if sb.len() == 1
-                                && (sb.chars().next().unwrap_or('$') == 'N'
-                                || sb.chars().next().unwrap_or('$') == 'n')
-                            {
-                                println!("Welcome {}", username);
-                                break false;
-                            } else {
-                                println!("please input [Y/N]");
+                            utils::get_input(&mut sb)?;
+                            if sb.len() == 1 {
+                                let ch = sb.chars().next().unwrap_or('$');
+                                if ch == 'Y' || ch == 'y' {
+                                    break true;
+                                } else if ch == 'N' || ch == 'n' {
+                                    println!("Welcome {}", username);
+                                    break false;
+                                }
                             }
+                            println!("please input [Y/N]");
                         }
                     }
                 } else {
@@ -161,7 +111,7 @@ async fn main() -> Result<()> {
         };
         if do_login {
             println!("please input your dede_user_id, dede_user_id_ck_md5, sessdata, bili_jct.Split by a blank space, eg `AAAA BBBB CCCC DDDD`");
-            get_input(&mut sb)?;
+            utils::get_input(&mut sb)?;
             let split = sb.split(' ').collect::<Vec<&str>>();
             let mut opener = utils::create_opener(split[0], split[1], split[2], split[3])?;
             let res = utils::get_user_info(&mut opener).await?;
@@ -183,10 +133,6 @@ async fn main() -> Result<()> {
             }
         }
     } else if let Some(c) = matches.value_of("upload") {
-        let p = Path::new(TEMP_PATH);
-        if !p.exists() {
-            std::fs::create_dir(p)?;
-        }
         let p = Path::new(c);
         if !p.exists() {
             println!("{} not exists!", c);
@@ -194,37 +140,42 @@ async fn main() -> Result<()> {
             let xor_key = rand::random::<u8>();
             println!("uploading");
             let d = utils::upload_batch(&mut opener, xor_key, p).await?;
-
-            let idx_path = format!("{}/idx", TEMP_PATH);
-            let idx_path = Path::new(&idx_path);
-
+            println!("upload part successfully");
             let aes_key = (0..32).map(|_| rand::random::<u8>()).collect::<Vec<u8>>();
             println!("aes_key {:?}", aes_key);
-            utils::generate_idx(p, idx_path, xor_key, &aes_key, &d)?;
-            let idx_url = utils::upload_single(&mut opener, idx_path).await?;
+            let buf = utils::generate_idx(p, xor_key, &aes_key, &d)?;
+            let idx_url = utils::upload_single(&mut opener, buf).await?;
             println!("idx url {}", idx_url);
-            let link = combine(aes_key, idx_url)?;
-            println!("upload successfully");
+            let link = utils::combine(aes_key, idx_url)?;
+            println!("upload idx successfully");
             println!("link = {}", link);
+            show_time = true;
         }
     } else if let Some(c) = matches.value_of("download") {
-        if let Ok(mut opener) = proc().await {
-            let (aes_key, url) = split(c)?;
-            println!("aes_key {:?}", aes_key);
-            let p = Path::new(TEMP_PATH);
-            if !p.exists() {
-                std::fs::create_dir(p)?;
-            }
-            let idx_url = format!("http://i0.hdslb.com/bfs/album/{}.png", url);
-            let idx_path = format!("{}/idx", TEMP_PATH);
-            let idx_path = Path::new(&idx_path);
-            utils::download_single(&mut opener, &idx_url, idx_path).await?;
-            let (xor_key, filename, sz, idx) = utils::decrypt_aes_single(idx_path, &aes_key)?;
-            utils::download_batch(&idx, TEMP_PATH, xor_key, filename, sz).await?;
-            println!("done");
+        let (aes_key, url) = utils::split(c)?;
+        println!("aes_key {:?}", aes_key);
+        let idx_url = format!("http://i0.hdslb.com/bfs/album/{}.png", url);
+        let (xor_key, filename, sz, urls) = utils::get_index(&idx_url, &aes_key).await?;
+        println!("xor_key {}", xor_key);
+        println!("filename {}", filename);
+        println!("size {} bytes", sz);
+        for i in urls.iter() {
+            println!("{}", i);
         }
+        utils::download_batch(&urls, xor_key, filename, sz).await?;
+        println!("done");
+        show_time = true;
     } else {
         println!("For more information try `-h`");
     }
+    if show_time {
+        let end = chrono::offset::Local::now();
+        let offet = end - start;
+        println!(
+            "Elapsed {} secs",
+            offet.num_milliseconds() as f32 / 1000.0f32
+        );
+    }
+
     Ok(())
 }
